@@ -4,6 +4,7 @@ import xlwt
 import csv
 import codecs
 from _codecs import decode
+import json
 
 class filewriter():
 
@@ -18,7 +19,7 @@ class filewriter():
             raise Exception(e)
         
     # 将字典中的数据存储为Excel 
-    def SaveToExcel(self,data_dict):      
+    def SaveToExcel(self,data_dict):    
         #data结构：{tablename,[{columnname,value}]}  
         wbk = xlwt.Workbook()      
         try:                   
@@ -64,7 +65,7 @@ class filewriter():
                             value = value.decode('utf-8')
                         else :
                             if isinstance(value,basestring):
-                                #待完善，字符为utf-8编码？
+                                #待完善，value先转换为unicode,然后在转换为utf8编码的string
                                 value = value.decode('utf-8').encode('utf-8')
 
                         columnindex =  columndict[key]
@@ -114,5 +115,17 @@ class filewriter():
                     spamwriter.writerow([data0,data1,data2,data3,data4])               
                 
                 csvfile.close()
+        except Exception,e:
+            raise Exception(e)
+        
+    def SaveToJSON(self,data_dict,pageid): 
+        #data结构：{tablename,[{columnname,value}]} 
+        try:                   
+            filename=pageid+".json"
+            file = codecs.open(filename, 'wb', encoding='utf-8')
+            line = json.dumps(data_dict,indent=1) + '\n'
+            file.write(line.decode("unicode_escape"))
+            file.close()
+                
         except Exception,e:
             raise Exception(e)

@@ -7,6 +7,7 @@ import re
 import requests
 import codecs
 import configuration
+from FileWriter import filewriter
 
 # Allow unicode characters to be printed.
 sys.stdout = codecs.getwriter('utf8')(sys.stdout)
@@ -19,7 +20,7 @@ class wikiextractor():
         self.currentpageid=0
         self.currentarticlename=""
         
-   # def clear_db(self):
+    #def clear_db(self):
         #scraperwiki.sql.execute("drop database main;")
 
         #scraperwiki.sql.commit()
@@ -32,8 +33,9 @@ class wikiextractor():
         data = re.sub('[\[\]]', '', data)
         # Strip all HTML tags.
         data = re.sub('<[^<]+?>', ' ', data)
-        data = re.sub('(?i)\{\{cite .*\}\}', '', data)
-        data = re.sub('&nbsp;', '', data)
+        # 移除所有{{}}对象
+        data = re.sub('(?i)\{\{.*\}\}', '', data)
+        data = re.sub('&nbsp;', '', data)        
         return data
     
     def clean_data_with_text(self,data):
@@ -42,7 +44,6 @@ class wikiextractor():
         # Strip all HTML tags.
         data = data.replace('<!--', '' )
         data = data.replace('-->', '' )
-        #data = re.sub(u'閿熸枻鎷�.*閿熸枻鎷�', '',data)
         data = re.sub(u'\(.*\)', '',data)
         data = data.replace('&nbsp;', '')
         return data
@@ -100,7 +101,7 @@ class wikiextractor():
                 
         self.get_data_dict_from_pageid(pages,data_dict,include_subcat)
                         
-         #閿熸枻鎷烽敓鏂ゆ嫹閿熸帴缁撴瀯
+         #分类
         for subcategory in subcategories:
             subcategory = subcategory.replace('Category:', '')
             self.parse_members(subcategory, data_dict, include_subcat )
@@ -112,8 +113,23 @@ class wikiextractor():
             json_content = request.json()
             return json_content
         except Exception,e:
-            raise Exception(u'网络连接失败，请检查')     
-            
+            raise Exception(u'网络连接失败，请检查')   
+          
+    def parsecontentfromxml(self,content,pageid,article_name):
+        try:            
+            #data结构:{tablename,{columnname,value}}
+            data = {}
+            data['id'] = pageid
+            data['article_name'] = article_name       
+            self.parse_coord(content,data)
+            #暂时只解析地理坐标，先不解析信息框和模板
+            #2015-12-14 19:53:22，时代在变，代码也要于是俱进，开始解析信息框和模板了
+            self.parse_infobox(content,data)
+            self.parse_template(content,data)
+            return data
+        except Exception,e:
+            raise e       
+     
     def parsecontent(self,pageid,shemal=False):        
         try:
             query = configuration.api_url_zh + '&action=query&pageids=%s&prop=revisions&rvprop=content' % pageid
@@ -135,7 +151,7 @@ class wikiextractor():
             self.currentpageid =  pageid
             self.currentarticlename = article_name
            
-            self.parse_province(content,data)
+            #self.parse_province(content,data)
             self.parse_coord(content,data)
             self.parse_infobox(content,data)
             
@@ -146,11 +162,12 @@ class wikiextractor():
   
     #解析坐标信息
     #TODO,有bug，待完善
-    def parse_coord(self,content,data):
+    def parse_coord_old(self,content,data):
         
         tabledata = {}
-        tabledata['id'] = self.currentpageid
-        tabledata['article_name'] = self.currentarticlename
+        if self.currentpageid != 0:
+            tabledata['id'] = self.currentpageid
+            tabledata['article_name'] = self.currentarticlename
         
         coord_occurences = re.findall('{{coord.*}}', content, re.U)
         
@@ -164,39 +181,88 @@ class wikiextractor():
                  tabledata["lon"] = coord    
         data["Coord"] = tabledata
     
-    #解析中国省份模板
-    def parse_province(self,content,data):    
-        #province_occurences= re.findall(u'{{中国省份(.*\n)*}}', content)        
-        province_occurences = re.split(u'{{中国省份', content)
-        if len(province_occurences)<2:
-            return
+    #解析坐标信息
+    def parse_coord(self,content,data):
         
-        tabledata = {}
-        tabledata['id'] = self.currentpageid
-        tabledata['article_name'] = self.currentarticlename
-        for province_occurence in province_occurences[1:]:
-    
-            infobox_end = re.search(u'\n[^\n{]*\}\}[^\n{]*\n', province_occurence, re.U)
-    
-            if infobox_end is None:
-                return
-    
-            province_occurence = province_occurence[:infobox_end.start():]
-            province_occurence = re.split(u'\n[^|\n]*\|', province_occurence)
-    
-            for item in province_occurence:
-                item = self.parse_tags(item)
-                item = self.clean_data(item)
-                if '=' in item:
-                    pair = item.split('=', 1)
-                    field = pair[0].strip()
-                    field = re.sub('\|', '', field)
-                    value = pair[1].strip()
-                    if value != '':
-                        tabledata[field] = value
-    
-        data[u'中国省份'] = tabledata
-    
+        tabledata = {}                
+        #查找{{coord|...|display=title}}字符
+        coords = re.findall('{{coord.*display=title.*}}', content.lower())
+        if len(coords)>0:
+            coordtext=coords[0]        
+            #替换空格
+            coordtext=coordtext.replace(' ','')
+            #注意：将两个||替换为一个|,否则会报错
+            coordtext=coordtext.replace('||','|')                
+            #是否包含经纬度标识
+            marks = re.findall('\|[wens]\|', coordtext)
+            if len(marks)>0:
+                #注意，利用最外层的括号来获取完整匹配结果
+                locations = re.findall('(\|-?\d{1,3}[.]?\d{0,13}(\|\d{1,3}[.]?\d{0,13}){0,2}\|[wens])', coordtext)                    
+                if len(locations)!=2:
+                    return
+                
+                #注意，使用括号匹配时的返回结果！
+                lattext = locations[0][0]
+                lontext = locations[1][0]
+                
+                lattext = re.split('\|[wens]', lattext)[0]
+                lontext = re.split('\|[wens]', lontext)[0]
+                #纯数字            
+                lattext=lattext.strip('|')                    
+                lontext=lontext.strip('|')                    
+                #分割数字        
+                lat=re.split('\|',lattext)
+                lon=re.split('\|',lontext)
+                
+                latnum=float(lat[0])
+                if len(lat)==2:
+                    latnum=latnum+float(lat[1])/60.0
+                if len(lat)==3:
+                    latnum=latnum+float(lat[1])/60.0 + float(lat[2])/3600.0
+                    
+                lonnum=float(lon[0])
+                if len(lon)==2:
+                    lonnum=lonnum+float(lon[1])/60.0
+                if len(lon)==3:
+                    lonnum=lonnum+float(lon[1])/60.0 + float(lon[2])/3600.0        
+                
+                #判断东西经度，南北纬度
+                southindex =coordtext.find('|s|')
+                westhindex =coordtext.find('|w|')
+                if southindex>0:
+                    latnum=0-latnum
+                if westhindex>0:
+                    lonnum=0-lonnum
+            else:
+                #此时，经纬度用小数点表示，不进行|划分
+                locations = re.findall('\|-?\d{1,3}[.]?\d{0,13}', coordtext)                    
+                if len(locations)!=2:
+                    return    
+                
+                lattext = locations[0]
+                lontext = locations[1]
+                #纯数字            
+                lattext=lattext.strip('|')                    
+                lontext=lontext.strip('|')                    
+                #分割数字        
+                lat=re.split('\|',lattext)
+                lon=re.split('\|',lontext)
+                
+                latnum=float(lat[0])
+                if len(lat)==2:
+                    latnum=latnum+float(lat[1])/60.0
+                if len(lat)==3:
+                    latnum=latnum+float(lat[1])/60.0 + float(lat[2])/3600.0
+                    
+                lonnum=float(lon[0])
+                if len(lon)==2:
+                    lonnum=lonnum+float(lon[1])/60.0
+                if len(lon)==3:
+                    lonnum=lonnum+float(lon[1])/60.0 + float(lon[2])/3600.0
+            tabledata["lat"] = latnum
+            tabledata["lon"] = lonnum             
+            data["Coord"] = tabledata        
+   
     #解析schemal文件对应的信息框，其他的忽略
     def parse_infobox_based_shemal(self,content,data):    
         #box_occurences = re.split('{{infobox[^\n}]*\n', content.lower())
@@ -229,8 +295,9 @@ class wikiextractor():
                 box_occurence = re.split('\n[^|\n]*\|', box_occurence)
                 
                 tabledata = {}
-                tabledata['id'] = self.currentpageid
-                tabledata['article_name'] = self.currentarticlename
+                if self.currentpageid != 0:
+                    tabledata['id'] = self.currentpageid
+                    tabledata['article_name'] = self.currentarticlename
                 boxname = boxes[index]
                 boxname = boxname.strip()
                 
@@ -259,7 +326,7 @@ class wikiextractor():
                 
         return data
     
-     #解析所有的信息框，不管有没有对应的shemal信息
+    #解析所有的信息框，不管有没有对应的shemal信息
     def parse_infobox(self,content,data):    
         #box_occurences = re.split('{{infobox[^\n\|}]*\n', content.lower())
         box_occurences = re.split('{{infobox[^\n}]*[\n\"]', content.lower())
@@ -267,9 +334,7 @@ class wikiextractor():
         if len(box_occurences) < 2:
             return None
         # 查找
-        boxes = re.findall('infobox[^\|\n}]*[\n\"]', content.lower())
-        for boxname in boxes:           
-            boxname = boxname.strip()            
+        boxes = re.findall('infobox[^\|\n}]*[\n\"]', content.lower())    
          
         if(len(boxes)==0):
             return None;   
@@ -290,8 +355,62 @@ class wikiextractor():
                 box_occurence = re.split('\n[^|\n]*\|', box_occurence)
                 
                 tabledata = {}
-                tabledata['id'] = self.currentpageid
-                tabledata['article_name'] = self.currentarticlename
+                if self.currentpageid != 0:
+                    tabledata['id'] = self.currentpageid
+                    tabledata['article_name'] = self.currentarticlename
+
+                #处理的对象
+                print boxname+'\n'
+                for item in box_occurence:
+                    item = self.parse_tags(item)
+                    item = self.clean_data(item)
+                    if '=' in item:
+                        pair = item.split('=', 1)
+                        field = pair[0].strip()
+                        field = re.sub('\|', '', field)
+                        value = pair[1].strip()
+                        if value != '' and self.validfield(field):
+                            tabledata[field.lower()] = value
+            except Exception,e:
+                continue;
+            #记录内容                          
+            data[boxname] = tabledata
+            index=index+1
+                
+        return data
+    #解析所有的模板框
+    def parse_template(self,content,data):    
+        #box_occurences = re.split('{{infobox[^\n\|}]*\n', content.lower())
+        box_occurences = re.split('{{[^\n}]*[\n\"]', content.lower())
+        
+        if len(box_occurences) < 2:
+            return None
+        # 查找
+        boxes = re.findall('{{[^\|\n}]*[\n\"]', content.lower())
+         
+        if(len(boxes)==0):
+            return None;   
+                         
+        index =0        
+        for box_occurence in box_occurences[1:]:
+            try:
+                boxname = boxes[index].strip()
+                boxname = boxname.strip('{{')        
+                #验证名称是否有效
+                if not self.validbox(boxname):
+                    continue
+                
+                infobox_end = re.search('\n[^\n{]*\}\}[^\n{]*\n', box_occurence)    
+                if infobox_end is None:
+                    return None
+        
+                box_occurence = box_occurence[:infobox_end.start():]
+                box_occurence = re.split('\n[^|\n]*\|', box_occurence)
+                
+                tabledata = {}
+                if self.currentpageid != 0:
+                    tabledata['id'] = self.currentpageid
+                    tabledata['article_name'] = self.currentarticlename
 
                 #处理的对象
                 print boxname+'\n'
@@ -311,8 +430,7 @@ class wikiextractor():
             data[boxname] = tabledata
             index=index+1
                 
-        return data
-    
+        return data    
     #验证字符串是否有效
     def validfield(self,field):
         fieldstring = field.decode('utf8')
@@ -331,7 +449,22 @@ class wikiextractor():
     def validbox(self,box):
         if u':'.decode('utf8') in box:
             return False
-        return TabError;
+        #2015-10-18 15:02:38，如果包含citation、noteta、cite、quote、navboxes等信息，也无效
+        if u'cit'.decode('utf8') in box:
+            return False
+        #2015-10-18 15:02:38，如果包含citation、noteta、cite、quote，也无效
+        if u'noteta'.decode('utf8') in box:
+            return False
+        #2015-10-18 15:02:38，如果包含citation、noteta、cite、quote，也无效
+        if u'quote'.decode('utf8') in box:
+            return False
+        #2015-10-18 15:02:38，如果包含citation、noteta、cite、quote，也无效
+        if u'navboxes'.decode('utf8') in box:
+            return False
+        #2015-10-18 15:02:38，如果包含citation、noteta、cite、quote，也无效
+        if u'Gallery'.decode('utf8') in box:
+            return False
+        return True;
     
     def get_infobox_schemal(self,infoboxname):
         filename = infoboxname.replace(" ","_")

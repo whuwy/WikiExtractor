@@ -108,11 +108,41 @@ class wikiextractor():
                 
 
     def getjson(self,url):
+        #首先登陆
+        if 0:
+            try:
+                #r = requests.post("https://en.wikipedia.org/w/api.php?action=query&format=json&meta=tokens&type=login&lgname=lixiangboss")
+                #tokenjson  = r.json()
+                #token = tokenjson["query"]["tokens"]["logintoken"]
+                #postdata = {'lgname':'lixiangboss','lgpassword':'chxylx','lgtoken':'48b34365bb2576ded3e821cf67d729f2590fefdd+\\'}
+                postdata = {'name':'lixiangboss','password':'chxylx','token':'48b34365bb2576ded3e821cf67d729f2590fefdd+\\'}
+                token='48b34365bb2576ded3e821cf67d729f2590fefdd+\\'
+                loginurl = "https://en.wikipedia.org/w/api.php?action=query&meta=tokens&type=login&format=json"
+                l = requests.post(loginurl, data=postdata)
+                print l.text
+                loginjson  = l.json()
+                loginresult=loginjson["login"]["result"]
+                
+            except Exception,e:
+                raise Exception(u'尝试登陆失败，请检查用户名')   
+                      
         try:
-            request = requests.get(url)
+            #定制请求头
+            #headers = {'user_agent':'WikiExtrator/1.1 (http://www.geodatamining.cn/; whuwy@163.com) BasedOnPython/1.4'}
+            headers = {'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                       'Accept-Encoding':'gzip, deflate, sdch, br',
+                       'Accept-Language':'zh-CN,zh;q=0.8',
+                        'Cache-Control':'max-age=0',
+                        'Connection':'keep-alive',
+                        'Cookie':'WMF-Last-Access=08-May-2017; WMF-Last-Access-Global=08-May-2017; GeoIP=US:CA:Mountain_View:37.42:-122.06:v4; TBLkisOn=0',
+                        'Host':'zh.wikipedia.org',
+                        'User-Agent':'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.96 Safari/537.36'}
+            request = requests.get(url, headers=headers)
             json_content = request.json()
             return json_content
         except Exception,e:
+            #print e.message
+            #print repr(e)
             raise Exception(u'网络连接失败，请检查')   
           
     def parsecontentfromxml(self,content,pageid,article_name):
